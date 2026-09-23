@@ -178,7 +178,11 @@ def add_run_args(parser):
         "--seed",
         type=int,
         default=DEFAULT_SEED,
-        help=f"The seed to use for the simulation. Default is {DEFAULT_SEED}.",
+        help=f"The seed to use for the simulation. Default is {DEFAULT_SEED}. "
+        "This seeds harness-side sampling (task order, persona selection) and is "
+        "also passed to the LLM, but providers without seed support drop it, so "
+        "provider sampling is not seeded for those models. A warning is logged "
+        "when that happens.",
     )
     parser.add_argument(
         "--log-level",

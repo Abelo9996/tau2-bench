@@ -6,6 +6,8 @@ instead of silently evaluating simulation.messages with the half-duplex
 evaluators (reported in PR #386).
 """
 
+import inspect
+
 from tau2.data_model.message import Tick, ToolCall, ToolMessage
 from tau2.data_model.simulation import (
     AudioNativeConfig,
@@ -18,6 +20,7 @@ from tau2.data_model.simulation import (
 )
 from tau2.data_model.tasks import EvaluationCriteria, Task, UserScenario
 from tau2.environment.environment import EnvironmentInfo
+from tau2.evaluator.evaluator import evaluate_simulation
 from tau2.evaluator.evaluator_env import REPLAY_MISMATCHES
 from tau2.orchestrator.modes import CommunicationMode
 from tau2.run import get_tasks
@@ -358,16 +361,26 @@ class TestReplayDivergenceIsReported:
     """
 
     @staticmethod
-    def _results(*mismatch_counts: int) -> Results:
+    def _results(*mismatch_counts: int, nested: bool = False) -> Results:
+        """Results carrying `mismatch_counts`, one simulation each.
+
+        `nested` builds the shape the combined evaluation types produce, where
+        each evaluator's info sits under its own key, rather than the top-level
+        shape EvaluationType.ENV produces.
+        """
         results = Results(
             info=_make_info(),
             tasks=[_make_task("t0")],
             simulations=[_make_half_duplex_sim("t0") for _ in mismatch_counts],
         )
         for simulation, count in zip(results.simulations, mismatch_counts):
-            simulation.reward_info = RewardInfo(
-                reward=1.0, info={REPLAY_MISMATCHES: count} if count else None
-            )
+            if not count:
+                info = None
+            elif nested:
+                info = {"env": {REPLAY_MISMATCHES: count}, "action": None}
+            else:
+                info = {REPLAY_MISMATCHES: count}
+            simulation.reward_info = RewardInfo(reward=1.0, info=info)
         return results
 
     def test_faithful_replay_summarises_as_clean(self):
@@ -376,6 +389,24 @@ class TestReplayDivergenceIsReported:
     def test_summary_counts_simulations_and_mismatches_separately(self):
         """Two numbers, because one bad simulation and one bad call differ."""
         assert replay_mismatch_summary(self._results(0, 3, 0, 5)) == (2, 8)
+
+    def test_summary_reads_the_nested_shape_the_default_run_produces(self):
+        """`evaluate-trajs` defaults to a combined evaluation type, which nests
+        each evaluator's info under its own key. Reading only the top level made
+        the count silently zero on every ordinary run."""
+        assert replay_mismatch_summary(self._results(0, 3, 5, nested=True)) == (2, 8)
+
+    def test_summary_matches_across_both_info_shapes(self):
+        flat = replay_mismatch_summary(self._results(0, 3, 5))
+        nested = replay_mismatch_summary(self._results(0, 3, 5, nested=True))
+
+        assert flat == nested == (2, 8)
+
+    def test_evaluator_nests_env_info_under_env(self):
+        """Pins the nesting this reads, so a change upstream fails here."""
+        source = inspect.getsource(evaluate_simulation)
+
+        assert '"env": env_reward_info.info' in source
 
     def test_summary_tolerates_a_simulation_scored_before_this_change(self):
         """`info` is None on older results and on clean simulations."""

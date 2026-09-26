@@ -9,7 +9,7 @@ from loguru import logger
 from rich.console import Console
 from rich.progress import Progress
 
-from tau2.data_model.simulation import Results, SimulationRun
+from tau2.data_model.simulation import Results, RewardInfo, SimulationRun
 from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
 from tau2.evaluator.evaluator_env import REPLAY_MISMATCHES
 from tau2.metrics.agent_metrics import compute_metrics
@@ -147,6 +147,22 @@ def compute_simulation_rewards(
     return results
 
 
+def _replay_mismatches(reward_info: Optional[RewardInfo]) -> int:
+    """Read the replay divergence count out of a RewardInfo.
+
+    The environment evaluator records it at the top level of its own
+    ``RewardInfo.info``, but the combined evaluation types nest each evaluator's
+    info under its own key (``info["env"]``, see evaluator.evaluate_simulation),
+    and ``evaluate-trajs`` uses a combined type by default. Both shapes are read
+    so the count is not silently zero on an ordinary run.
+    """
+    info = (reward_info.info if reward_info else None) or {}
+    nested = info.get("env") or {}
+    return int(info.get(REPLAY_MISMATCHES, 0) or 0) + int(
+        nested.get(REPLAY_MISMATCHES, 0) or 0
+    )
+
+
 def replay_mismatch_summary(results: Results) -> tuple[int, int]:
     """Count simulations whose replay diverged, and the total divergences.
 
@@ -157,9 +173,7 @@ def replay_mismatch_summary(results: Results) -> tuple[int, int]:
     simulations = 0
     mismatches = 0
     for simulation in results.simulations:
-        count = ((simulation.reward_info.info or {}) if simulation.reward_info else {}).get(
-            REPLAY_MISMATCHES, 0
-        )
+        count = _replay_mismatches(simulation.reward_info)
         if count:
             simulations += 1
             mismatches += count
